@@ -134,6 +134,8 @@
 </head>
 <body>
 
+<div id="error-banner" style="display:none; position:fixed; top:0; left:0; right:0; z-index:100; background:#c0453a; color:#fff; padding:10px 16px; font-size:13px; font-family:monospace; word-break:break-word;"></div>
+
 <div id="login-gate">
   <h1>Repertorio</h1>
   <p>Inicia sesión con tu cuenta de Google para guardar y sincronizar tus canciones entre la tablet y el móvil.</p>
@@ -221,6 +223,17 @@
   </main>
 </div>
 
+<script>
+  function showErrorBanner(msg){
+    const b = document.getElementById('error-banner');
+    if(!b) return;
+    b.style.display = 'block';
+    b.textContent = 'Error: ' + msg + '  (haz una captura de esto y mándasela a Claude)';
+  }
+  window.addEventListener('error', (e)=> showErrorBanner(e.message + ' — línea ' + e.lineno));
+  window.addEventListener('unhandledrejection', (e)=> showErrorBanner('promesa rechazada: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)));
+</script>
+
 <!-- Firebase (modular v10) -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -246,6 +259,7 @@ const firebaseConfig = {
   appId: "1:628171156139:web:8c35592d0db362b83a65ee",
 };
 
+try{
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -275,6 +289,10 @@ onAuthStateChanged(auth, (user)=>{
     chip.innerHTML = '';
   }
 });
+}catch(e){
+  document.getElementById('error-banner').style.display='block';
+  document.getElementById('error-banner').textContent = 'Error al iniciar Firebase: ' + e.message;
+}
 </script>
 
 <!-- PDF export -->
@@ -617,11 +635,14 @@ onAuthStateChanged(auth, (user)=>{
     saveMeta();
   });
   $('#autoscroll-btn').addEventListener('click', toggleAutoscroll);
-  $('#speed-slider').addEventListener('input', (e)=>{
-    state.scrollSpeed = parseInt(e.target.value, 10);
-    restartAutoscrollIfRunning();
-  });
-  $('#speed-slider').addEventListener('change', ()=> saveMeta());
+  const speedSlider = $('#speed-slider');
+  if(speedSlider){
+    speedSlider.addEventListener('input', (e)=>{
+      state.scrollSpeed = parseInt(e.target.value, 10);
+      restartAutoscrollIfRunning();
+    });
+    speedSlider.addEventListener('change', ()=> saveMeta());
+  }
 })();
 </script>
 </body>
