@@ -14,7 +14,7 @@
     --border:#3a322a;
     --text:#f1e9dd;
     --text-muted:#9c9284;
-    --chord:#6fbfae;
+    --chord:#4fd1c0;
     --active:#d9a441;
     --active-text:#171412;
     --danger:#c0453a;
@@ -93,10 +93,13 @@
   .ctrl-btn{background:var(--surface-2); border:1px solid var(--border); color:var(--text); width:36px; height:36px; border-radius:8px; cursor:pointer; font-size:15px;}
   .ctrl-btn:hover{border-color:var(--active);}
   .ctrl-btn.on{background:var(--active); color:var(--active-text); border-color:var(--active);}
+  #speed-wrap{display:flex; align-items:center; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:0 8px; height:36px;}
+  #speed-slider{width:70px; accent-color:var(--active); cursor:pointer;}
+  @media (max-width:760px){ #speed-wrap{width:56px;} #speed-slider{width:44px;} }
 
   #viewer{flex:1; overflow-y:auto; padding:26px 32px 90px; scroll-behavior:smooth;}
   #viewer pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace; white-space:pre-wrap; word-break:break-word; line-height:1.65; margin:0; max-width:760px;}
-  .chordline{color:var(--chord); font-weight:600;}
+  .chordline{color:var(--chord); font-weight:700; letter-spacing:.2px;}
 
   #placeholder{flex:1; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px; color:var(--text-muted); text-align:center; padding:20px;}
   #placeholder .big{font-family:'Fraunces',serif; font-size:26px; color:var(--text); font-weight:600;}
@@ -173,6 +176,9 @@
         <button class="ctrl-btn" id="font-minus" title="Reducir letra">A−</button>
         <button class="ctrl-btn" id="font-plus" title="Aumentar letra">A+</button>
         <button class="ctrl-btn" id="autoscroll-btn" title="Autoscroll">▶</button>
+        <div id="speed-wrap" title="Velocidad del autoscroll">
+          <input type="range" id="speed-slider" min="1" max="10" step="1" value="3">
+        </div>
         <button class="ctrl-btn" id="pdf-btn" title="Descargar PDF">⇩</button>
         <button class="ctrl-btn" id="edit-song-btn" title="Editar">✎</button>
       </div>
@@ -279,7 +285,7 @@ onAuthStateChanged(auth, (user)=>{
   const state = {
     songs: {}, setlist: [], fontSize: 19,
     activeTab: 'setlist', activeSongId: null, editingId: null,
-    autoscroll: false, scrollTimer: null,
+    autoscroll: false, scrollTimer: null, scrollSpeed: 3,
     uid: null, unsubSongs: null, unsubMeta: null,
   };
 
@@ -325,7 +331,10 @@ onAuthStateChanged(auth, (user)=>{
       if(data){
         state.setlist = data.setlist || [];
         state.fontSize = data.fontSize || 19;
+        state.scrollSpeed = data.scrollSpeed || 3;
         viewerContent.style.fontSize = state.fontSize + 'px';
+        const slider = $('#speed-slider');
+        if(slider) slider.value = state.scrollSpeed;
       }
       render();
     });
@@ -342,7 +351,7 @@ onAuthStateChanged(auth, (user)=>{
   async function saveMeta(){
     if(!state.uid) return;
     await window.__setDoc(window.__doc(window.__db, 'users', state.uid, 'meta', 'config'), {
-      setlist: state.setlist, fontSize: state.fontSize
+      setlist: state.setlist, fontSize: state.fontSize, scrollSpeed: state.scrollSpeed
     });
   }
 
@@ -423,11 +432,16 @@ onAuthStateChanged(auth, (user)=>{
   function highlightChordLines(){
     const raw = viewerContent.textContent;
     const lines = raw.split('\n');
-    const chordLineRe = /^[\sA-G0-9#b/m°susaddimajM\-\.]*$/;
-    const hasLetter = /[A-G]/;
+    // Reconoce acordes tanto en notación castellana (Do Re Mi Fa Sol La Si)
+    // como en notación inglesa (A B C D E F G), con sostenido/bemol, mayor/menor,
+    // séptimas, sus, add, disminuido, aumentado y bajo tras barra (ej. Sol/Si, G/B).
+    const chordToken = /^\(?(Do|Re|Mi|Fa|Sol|La|Si|[A-G])(#|b|s)?(m|maj7|maj|dim7|dim|aug|sus2|sus4|sus|add9|add)?(7|9|11|13)?(\/(Do|Re|Mi|Fa|Sol|La|Si|[A-G])(#|b)?)?\)?$/i;
     const html = lines.map(line=>{
       const trimmed = line.trim();
-      if(trimmed.length>0 && trimmed.length<40 && chordLineRe.test(line) && hasLetter.test(line)){
+      if(trimmed.length===0) return escapeHtml(line);
+      const tokens = trimmed.split(/\s+/).filter(Boolean);
+      const isChordLine = tokens.length>0 && tokens.every(t=> chordToken.test(t));
+      if(isChordLine){
         return `<span class="chordline">${escapeHtml(line)}</span>`;
       }
       return escapeHtml(line);
@@ -506,14 +520,29 @@ onAuthStateChanged(auth, (user)=>{
     $('#autoscroll-btn').classList.remove('on'); $('#autoscroll-btn').textContent = '▶';
     if(state.scrollTimer){ clearInterval(state.scrollTimer); state.scrollTimer=null; }
   }
+  function autoscrollDelay(){
+    // speed 1 (lento) -> ~140ms por paso; speed 10 (rápido) -> ~20ms por paso
+    return Math.round(150 - (state.scrollSpeed - 1) * 14);
+  }
+
   function toggleAutoscroll(){
     if(state.autoscroll){ stopAutoscroll(); return; }
     state.autoscroll = true;
     $('#autoscroll-btn').classList.add('on'); $('#autoscroll-btn').textContent = '❚❚';
+    if(state.scrollTimer) clearInterval(state.scrollTimer);
     state.scrollTimer = setInterval(()=>{
       viewer.scrollTop += 1;
       if(viewer.scrollTop + viewer.clientHeight >= viewer.scrollHeight - 2) stopAutoscroll();
-    }, 60);
+    }, autoscrollDelay());
+  }
+
+  function restartAutoscrollIfRunning(){
+    if(!state.autoscroll) return;
+    clearInterval(state.scrollTimer);
+    state.scrollTimer = setInterval(()=>{
+      viewer.scrollTop += 1;
+      if(viewer.scrollTop + viewer.clientHeight >= viewer.scrollHeight - 2) stopAutoscroll();
+    }, autoscrollDelay());
   }
 
   function downloadSongPdf(){
@@ -588,6 +617,11 @@ onAuthStateChanged(auth, (user)=>{
     saveMeta();
   });
   $('#autoscroll-btn').addEventListener('click', toggleAutoscroll);
+  $('#speed-slider').addEventListener('input', (e)=>{
+    state.scrollSpeed = parseInt(e.target.value, 10);
+    restartAutoscrollIfRunning();
+  });
+  $('#speed-slider').addEventListener('change', ()=> saveMeta());
 })();
 </script>
 </body>
